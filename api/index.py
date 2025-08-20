@@ -1,16 +1,20 @@
-from flask import Flask, jsonify 
+from flask import Flask, jsonify
 from pymongo.mongo_client import MongoClient
 from pymongo.server_api import ServerApi
 from pymongo.errors import ServerSelectionTimeoutError
 import certifi
+
 uri = "mongodb+srv://crisesv4:Tanke280423@cluster0.ejxv3jy.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0"
+
+# Cliente global con TLS y certifi
 client = MongoClient(
     uri,
     server_api=ServerApi("1"),
-    tlsCAFile=certifi.where(),   # <- certificado raíz actualizado
+    tlsCAFile=certifi.where(),
     serverSelectionTimeoutMS=5000,
     tls=True
 )
+
 app = Flask(__name__)
 
 @app.route('/')
@@ -24,8 +28,8 @@ def about():
 @app.route("/connection", methods=["GET"])
 def connection():
     try:
-        client = MongoClient(uri, server_api=ServerApi("1"), serverSelectionTimeoutMS=5000)
-        client.admin.command("ping")  # Test de conexión
+        # Aquí usamos el client global ya configurado
+        client.admin.command("ping")
         return jsonify({"status": "success", "message": "Conectado a MongoDB"})
     except ServerSelectionTimeoutError as e:
         return jsonify({"status": "error", "message": str(e)}), 500
