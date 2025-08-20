@@ -20,7 +20,7 @@ def home():
 def about():
     return 'About'
 
-@app.route("/Connection", methods=["GET"])
+@app.route("/connection", methods=["GET"])
 def connection():
     try:
         client = MongoClient(uri, server_api=ServerApi("1"), serverSelectionTimeoutMS=5000)
