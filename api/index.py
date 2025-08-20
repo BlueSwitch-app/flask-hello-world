@@ -8,7 +8,8 @@ client = MongoClient(
     uri,
     server_api=ServerApi("1"),
     tlsCAFile=certifi.where(),   # <- certificado raíz actualizado
-    serverSelectionTimeoutMS=5000
+    serverSelectionTimeoutMS=5000,
+    tls=True
 )
 app = Flask(__name__)
 
