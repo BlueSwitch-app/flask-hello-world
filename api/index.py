@@ -6,6 +6,10 @@ import certifi
 import uuid
 from datetime import datetime
 import math
+from typing import Annotated
+from pydantic import BaseModel, constr, Field
+import secrets
+
 uri = "mongodb+srv://crisesv4:Tanke280423@cluster0.ejxv3jy.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0"
 import cloudinary
 import cloudinary.uploader
