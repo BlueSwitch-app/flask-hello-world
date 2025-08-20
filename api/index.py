@@ -34,8 +34,10 @@ client = MongoClient(
     serverSelectionTimeoutMS=5000,
     tls=True
 )
+from flask_cors import CORS
 
 app = Flask(__name__)
+CORS(app, resources={r"/*": {"origins": "*"}})
 db = client["BlueSwitchData"]
 
 
@@ -459,3 +461,7 @@ def leave_team():
     discardDevicesCollection.insert_many(result)
     devicescollection.update_many({"email": user_email, "team": team_code}, {"$set": {"team": "no_team"}})
     return jsonify({"mensaje": "El usuario ha dejado el equipo"}), 200
+print("AQUi")
+if __name__ == "__main__":
+    print("SI")
+    app.run(debug=True, host="0.0.0.0", port=5000)
