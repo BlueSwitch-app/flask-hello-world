@@ -1,32 +1,31 @@
-from flask import Flask, jsonify, request
+# ==================== IMPORTS ====================
+from flask import Flask, jsonify, request, make_response
 from pymongo.mongo_client import MongoClient
 from pymongo.server_api import ServerApi
 from pymongo.errors import ServerSelectionTimeoutError
 import certifi
 import uuid
-from datetime import datetime
+import datetime
 import math
 from typing import Annotated
-from pydantic import BaseModel, constr, Field
+from pydantic import BaseModel, constr, Field, field_validator
+from typing import List
 import secrets
-
-uri = "mongodb+srv://crisesv4:Tanke280423@cluster0.ejxv3jy.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0"
 import cloudinary
 import cloudinary.uploader
-cloudinary.config( 
-    cloud_name = "dkjlygxse", 
-    api_key = "111946664427639", 
-    api_secret = "iYwxs47jmdPmb-xCGtJfWKtg-F8", # Click 'View API Keys' above to copy your API secret
+from flask_cors import CORS
+
+# ==================== CONFIGURACIÓN ====================
+# Cloudinary
+cloudinary.config(
+    cloud_name="dkjlygxse",
+    api_key="111946664427639",
+    api_secret="iYwxs47jmdPmb-xCGtJfWKtg-F8",
     secure=True
 )
-def upload_image(image_path):
-# Configuration       
 
-# Upload an image
-    upload_result = cloudinary.uploader.upload(image_path,
-                                           public_id="")
-    return(upload_result["secure_url"])
-# Cliente global con TLS y certifi
+# MongoDB
+uri = "mongodb+srv://crisesv4:Tanke280423@cluster0.ejxv3jy.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0"
 client = MongoClient(
     uri,
     server_api=ServerApi("1"),
@@ -34,55 +33,119 @@ client = MongoClient(
     serverSelectionTimeoutMS=5000,
     tls=True
 )
-from flask_cors import CORS
-
-app = Flask(__name__)
-CORS(app, resources={r"/*": {"origins": "*"}})
 db = client["BlueSwitchData"]
+userscollection = db["Users"]
+devicescollection = db["Devices"]
+discardDevicesCollection = db["discardDevices"]
+teamscollection = db["Teams"]
 
+# Flask
+app = Flask(__name__)
+
+# Configuración CORS mejorada
+CORS(app, resources={
+    r"/*": {
+        "origins": "*",
+        "methods": ["GET", "POST", "PUT", "OPTIONS"],
+        "allow_headers": ["Content-Type", "Authorization"],
+        "expose_headers": ["Content-Type"],
+        "supports_credentials": True
+    }
+})
+
+# ==================== FUNCIONES AUXILIARES ====================
+def upload_image(image_path):
+    upload_result = cloudinary.uploader.upload(image_path, public_id="")
+    return upload_result["secure_url"]
 
 def CalculateCO2forDevice(devices):
     CO2Total = []
     for device in devices:
         created_at_list = device.get("created_at", [])
-
         if isinstance(created_at_list, list):
             for interval in created_at_list:
                 if isinstance(interval, list) and len(interval) == 2:
                     start, end = interval
-
                     try:
-                        # Convertir start a datetime aware en UTC
                         if start:
                             start_datetime = datetime.datetime.fromisoformat(str(start))
                             if start_datetime.tzinfo is None:
                                 start_datetime = start_datetime.replace(tzinfo=datetime.timezone.utc)
                         else:
                             continue
-
-                        # Convertir end o usar ahora (también aware en UTC)
+                            
                         if end:
                             end_datetime = datetime.datetime.fromisoformat(str(end))
                             if end_datetime.tzinfo is None:
                                 end_datetime = end_datetime.replace(tzinfo=datetime.timezone.utc)
                         else:
                             end_datetime = datetime.datetime.now(datetime.timezone.utc)
-
-                        # Calcular tiempo en horas
+                            
                         time_difference = end_datetime - start_datetime
                         hours = time_difference.total_seconds() / 3600
-
-                        # Calcular CO2
                         watts = device.get("watts", 0)
                         CO2 = (watts * hours / 1000) * 0.44
-                        CO2Total.append([round(CO2, 2),round(hours, 2)])
-               
-
+                        CO2Total.append([round(CO2, 2), round(hours, 2)])
                     except Exception as e:
                         print(f"Error procesando intervalo {interval}: {e}")
     return CO2Total
-import secrets
 
+def calculateWatts(devices):
+    watts = 0
+    for device in devices:
+        watts += device['watts']
+    return watts/len(devices) if devices else 0
+
+def CalculateCO2(devices):
+    CO2Total = 0
+    device_CO2 = {}
+    device_emails = {}
+    
+    for device in devices:
+        device_name = device.get("nombre", "Desconocido")
+        device_email = device.get("email", "Desconocido")
+        device_CO2[device_name] = 0
+        device_emails[device_name] = device_email
+        
+        created_at_list = device.get("created_at", [])
+        if isinstance(created_at_list, list):
+            for interval in created_at_list:
+                if isinstance(interval, list) and len(interval) == 2:
+                    start, end = interval
+                    try:
+                        if start:
+                            start_datetime = datetime.datetime.fromisoformat(str(start))
+                            if start_datetime.tzinfo is None:
+                                start_datetime = start_datetime.replace(tzinfo=datetime.timezone.utc)
+                        else:
+                            continue
+                            
+                        if end:
+                            end_datetime = datetime.datetime.fromisoformat(str(end))
+                            if end_datetime.tzinfo is None:
+                                end_datetime = end_datetime.replace(tzinfo=datetime.timezone.utc)
+                        else:
+                            end_datetime = datetime.datetime.now(datetime.timezone.utc)
+                            
+                        hours = (end_datetime - start_datetime).total_seconds() / 3600
+                        watts = device.get("watts", 0)
+                        CO2 = (watts * hours / 1000) * 0.44
+                        CO2Total += CO2
+                        device_CO2[device_name] += CO2
+                    except Exception as e:
+                        print(f"Error procesando intervalo {interval}: {e}")
+    
+    if device_CO2:
+        max_device_name = max(device_CO2, key=device_CO2.get)
+        max_device_email = device_emails.get(max_device_name, None)
+    else:
+        max_device_name = None
+        max_device_email = None
+        
+    total_CO2 = round(CO2Total, 3) if CO2Total > 0 else (1 if CO2Total < 0 else 0)
+    return total_CO2, {"nombre": max_device_name, "email": max_device_email}
+
+# ==================== MODELOS DE DATOS ====================
 class TeamMember(BaseModel):
     email: str
     role: str
@@ -91,35 +154,26 @@ class Team(BaseModel):
     Name: Annotated[str, constr(min_length=1, strip_whitespace=True)]
     StringId: str = Field(default_factory=lambda: secrets.token_hex(6))
     Members: list[TeamMember] = []
-def calculateWatts(devices):
-    watts = 0
-    for device in devices:
-        watts += device['watts']
-    return watts/len(devices)
-from pydantic import BaseModel, constr, Field, field_validator
-from typing import Annotated, List
+
 class User(BaseModel):
     nombre: Annotated[str, constr(min_length=1, strip_whitespace=True)]
     email: Annotated[str, constr(min_length=1, strip_whitespace=True)]
     password: Annotated[str, constr(min_length=1, strip_whitespace=True)]
     phone: Annotated[str, constr(min_length=1, strip_whitespace=True)]
     city: Annotated[str, constr(min_length=1, strip_whitespace=True)]
-    avatar: Annotated[str, constr(min_length=1, strip_whitespace=True)]= "https://res.cloudinary.com/dkjlygxse/image/upload/v1746846631/is-there-a-sniper-default-pfp-that-someone-made-v0-78az45pd9f6c1_ymnf4h.webp"
-userscollection = db["Users"]
-devicescollection = db["Devices"]
-discardDevicesCollection = db["discardDevices"]
-teamscollection = db["Teams"]
+    avatar: Annotated[str, constr(min_length=1, strip_whitespace=True)] = "https://res.cloudinary.com/dkjlygxse/image/upload/v1746846631/is-there-a-sniper-default-pfp-that-someone-made-v0-78az45pd9f6c1_ymnf4h.webp"
+
 class Producto(BaseModel):
     nombre: Annotated[str, constr(min_length=1, strip_whitespace=True)]
     categoria: Annotated[str, constr(min_length=1, strip_whitespace=True)]
     watts: int
     color: Annotated[str, constr(min_length=1, strip_whitespace=True)]
     state: bool = True
-    created_at: List[datetime] = Field(default_factory=lambda: [datetime.utcnow().isoformat()])
+    created_at: List = Field(default_factory=lambda: [datetime.datetime.now().now().isoformat()])
     email: Annotated[str, constr(min_length=1, strip_whitespace=True)]
     favorite: bool = False
     team: Annotated[str, constr(min_length=1, strip_whitespace=True)]
-
+    
     @field_validator('watts')
     @classmethod
     def validar_watts_positivo(cls, valor):
@@ -127,57 +181,17 @@ class Producto(BaseModel):
             raise ValueError('El valor de los watts debe ser positivo')
         return valor
 
-def CalculateCO2(devices):
-    CO2Total = 0
-    device_CO2 = {}  # CO2 por dispositivo
-    device_emails = {}  # Email por dispositivo
+# ==================== MANEJADOR GLOBAL PARA CORS ====================
+@app.before_request
+def handle_preflight():
+    if request.method == "OPTIONS":
+        response = make_response()
+        response.headers.add("Access-Control-Allow-Origin", "*")
+        response.headers.add("Access-Control-Allow-Headers", "Content-Type, Authorization")
+        response.headers.add("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+        return response
 
-    for device in devices:
-        device_name = device.get("nombre", "Desconocido")
-        device_email = device.get("email", "Desconocido")
-        device_CO2[device_name] = 0
-        device_emails[device_name] = device_email
-
-        created_at_list = device.get("created_at", [])
-        if isinstance(created_at_list, list):
-            for interval in created_at_list:
-                if isinstance(interval, list) and len(interval) == 2:
-                    start, end = interval
-                    try:
-                        # start
-                        if start:
-                            start_datetime = datetime.datetime.fromisoformat(str(start))
-                            if start_datetime.tzinfo is None:
-                                start_datetime = start_datetime.replace(tzinfo=datetime.timezone.utc)
-                        else:
-                            continue
-                        # end
-                        if end:
-                            end_datetime = datetime.datetime.fromisoformat(str(end))
-                            if end_datetime.tzinfo is None:
-                                end_datetime = end_datetime.replace(tzinfo=datetime.timezone.utc)
-                        else:
-                            end_datetime = datetime.datetime.now(datetime.timezone.utc)
-
-                        hours = (end_datetime - start_datetime).total_seconds() / 3600
-                        watts = device.get("watts", 0)
-                        CO2 = (watts * hours / 1000) * 0.44
-                        CO2Total += CO2
-                        device_CO2[device_name] += CO2
-
-                    except Exception as e:
-                        print(f"Error procesando intervalo {interval}: {e}")
-
-    # Obtener dispositivo con más CO2
-    if device_CO2:
-        max_device_name = max(device_CO2, key=device_CO2.get)
-        max_device_email = device_emails.get(max_device_name, None)
-    else:
-        max_device_name = None
-        max_device_email = None
-
-    total_CO2 = round(CO2Total, 3) if CO2Total > 0 else (1 if CO2Total < 0 else 0)
-    return total_CO2, {"nombre": max_device_name, "email": max_device_email}
+# ==================== RUTAS BÁSICAS ====================
 @app.route('/')
 def home():
     return 'Hello, World!'
@@ -189,11 +203,12 @@ def about():
 @app.route("/connection", methods=["GET"])
 def connection():
     try:
-        # Aquí usamos el client global ya configurado
         client.admin.command("ping")
         return jsonify({"status": "success", "message": "Conectado a MongoDB"})
     except ServerSelectionTimeoutError as e:
         return jsonify({"status": "error", "message": str(e)}), 500
+
+# ==================== RUTAS DE USUARIO ====================
 @app.route("/create_user", methods=["POST"])
 def create_user():
     data = request.get_json(force=True)
@@ -226,10 +241,8 @@ def update_user():
     email = data.get("email")
     if not email:
         return jsonify({"success": False, "error": "Email is required"}), 400
-
     update_fields = {k: v for k, v in data.items() if v and k != "email"}
     result = userscollection.update_one({"email": email}, {"$set": update_fields})
-
     if result.matched_count > 0:
         return jsonify({"success": True}), 200
     else:
@@ -250,18 +263,16 @@ def upload_avatar():
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
 
-# -------- DISPOSITIVOS --------
+# ==================== RUTAS DE DISPOSITIVOS ====================
 @app.route("/crear-device", methods=["POST"])
 def crear_producto():
     data = request.get_json(force=True)
     if not data:
         return jsonify({"mensaje": "No se recibió información"}), 400
-
     campos_requeridos = ["nombre", "categoria", "watts", "color", "team_code", "email"]
     for campo in campos_requeridos:
         if campo not in data or data[campo] == "" or data[campo] is None:
             return jsonify({"mensaje": f"All fields are required"}), 400
-
     try:
         producto = Producto(
             nombre=data["nombre"],
@@ -275,7 +286,7 @@ def crear_producto():
         )
         producto_dict = producto.model_dump(exclude_unset=False)
         producto_dict["stringid"] = str(uuid.uuid4())
-        producto_dict["created_at"] = [[datetime.now().isoformat(), None]]
+        producto_dict["created_at"] = [[datetime.datetime.now().isoformat(), None]]
         devicescollection.insert_one(producto_dict)
         return jsonify({"mensaje": "Producto creado exitosamente"}), 200
     except Exception as e:
@@ -288,7 +299,6 @@ def get_devices():
     team_code = data.get("team_code")
     if not email and not team_code:
         return jsonify({"error": "Either email or team_code is required"}), 400
-
     query = {"email": email} if email else {"team": team_code}
     devices = list(devicescollection.find(query, {"_id": False}))
     return jsonify(devices), 200
@@ -305,10 +315,9 @@ def update_device_status():
         device = devicescollection.find_one({'stringid': device_id})
         if not device:
             return jsonify({'error': 'Dispositivo no encontrado'}), 404
-
         if args == "Switch":
             historial = device.get('created_at', [])
-            now = datetime.utcnow().isoformat()
+            now = datetime.datetime.utcnow().isoformat()
             if device.get('state') == new_status:
                 return jsonify({'mensaje': 'El estado ya está actualizado'}), 200
             if new_status is True:
@@ -368,7 +377,7 @@ def statistics_per_user():
     trees_value = math.ceil(co2_value / 22)
     return jsonify({"success": True, "data": {"CO2": co2_value, "numdevices": len(statistics), "trees": trees_value, "watts": Watts if Watts else 0}}), 200
 
-# -------- EQUIPOS --------
+# ==================== RUTAS DE EQUIPOS ====================
 @app.route('/create_team', methods=['POST'])
 def create_team():
     data = request.get_json(force=True)
@@ -461,7 +470,7 @@ def leave_team():
     discardDevicesCollection.insert_many(result)
     devicescollection.update_many({"email": user_email, "team": team_code}, {"$set": {"team": "no_team"}})
     return jsonify({"mensaje": "El usuario ha dejado el equipo"}), 200
-print("AQUi")
+
+# ==================== EJECUCIÓN PRINCIPAL ====================
 if __name__ == "__main__":
-    print("SI")
     app.run(debug=True, host="0.0.0.0", port=5000)
